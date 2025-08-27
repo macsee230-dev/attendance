@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QR Code Scanner & Student Management</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .scanner-container { position: relative; overflow: hidden; box-shadow: 0 20px 40px rgba(0,0,0,0.2); }
+        .scanner-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 3px solid #00ff00; box-shadow: 0 0 0 4000px rgba(0,0,0,0.3); pointer-events: none; animation: scanner-pulse 2s infinite; }
+        @keyframes scanner-pulse { 0%, 100% { border-color: #00ff00; } 50% { border-color: #00cc00; } }
+        .student-card { transition: all 0.3s ease; border-left: 4px solid transparent; }
+        .student-card:hover { transform: translateY(-2px); border-left-color: #667eea; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
+        .scanned-data { word-wrap: break-word; max-height: 200px; overflow-y: auto; }
+        .toast { position: fixed; top: 20px; right: 20px; padding: 12px 20px; border-radius: 8px; color: white; font-weight: 500; z-index: 1000; transform: translateX(100%); transition: transform 0.3s ease; }
+        .toast.show { transform: translateX(0); }
+        .toast.success { background-color: #10b981; }
+        .toast.warning { background-color: #f59e0b; }
+        .toast.error { background-color: #ef4444; }
+        .scanner-status { padding: 8px 12px; border-radius: 6px; font-size: 14px; font-weight: 500; }
+        .scanner-active { background-color: #10b981; color: white; }
+        .scanner-inactive { background-color: #6b7280; color: white; }
+    </style>
+</head>
+<body class="min-h-screen py-8 px-4">
+    <div class="max-w-6xl mx-auto">
+        <!-- Toast Container -->
+        <div id="toastContainer"></div>
+
+        <!-- Header -->
+        <div class="text-center mb-12">
+            <h1 class="text-4xl md:text-5xl font-bold text-white mb-4">QR Code Scanner</h1>
+            <p class="text-xl text-white/80 max-w-2xl mx-auto">Scan QR codes to extract information and manage student records</p>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <!-- Scanner Section -->
+            <div class="space-y-6">
+                <div class="bg-white rounded-xl p-6 shadow-2xl">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-2xl font-semibold text-gray-800">Scan QR Code</h2>
+                        <span id="scannerStatus" class="scanner-status scanner-inactive">Scanner Inactive</span>
+                    </div>
+                    <div class="scanner-container rounded-lg bg-gray-100 mb-4">
+                        <video id="video" width="100%" height="300" class="rounded-lg"></video>
+                        <div class="scanner-overlay rounded-lg"></div>
+                    </div>
+                    <div class="flex gap-4 mb-4">
+                        <button id="startScanner" class="flex-1 bg-green-600 hover:bg-green-700 text-white py-3 px-6 rounded-lg font-semibold transition-colors">Start Scanner</button>
+                        <button id="stopScanner" class="flex-1 bg-red-600 hover:bg-red-700 text-white py-3 px-6 rounded-lg font-semibold transition-colors" disabled>Stop Scanner</button>
+                    </div>
+                    <div class="bg-gray-50 p-4 rounded-lg">
+                        <h3 class="font-semibold text-gray-700 mb-2">Scanned Data:</h3>
+                        <div id="scannedData" class="scanned-data p-3 bg-white rounded border border-gray-200 text-gray-700 min-h-[60px]">No data scanned yet...</div>
+                    </div>
+                </div>
+
+                <!-- Manual Entry -->
+                <div class="bg-white rounded-xl p-6 shadow-2xl">
+                    <h2 class="text-2xl font-semibold text-gray-800 mb-4">Manual Entry</h2>
+                    <div class="space-y-4">
+                        <input type="text" id="manualInput" placeholder="Enter student data (Name ID)" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                        <button id="addManual" class="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 px-6 rounded-lg font-semibold transition-colors">Add to List</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Student List Section -->
+            <div class="bg-white rounded-xl p-6 shadow-2xl">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-2xl font-semibold text-gray-800">Student List</h2>
+                    <div class="flex items-center gap-2">
+                        <span id="studentCount" class="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-medium">2 students</span>
+                        <button id="clearAll" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">Clear All</button>
+                        <button id="exportExcel" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                            </svg>
+                            Export Excel
+                        </button>
+                    </div>
+                </div>
+                <div class="space-y-3" id="studentList"></div>
+                <div class="mt-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                    <h3 class="font-semibold text-yellow-800 mb-2">Instructions:</h3>
+                    <p class="text-yellow-700 text-sm">
+                        • QR codes should contain student data in format: "Name StudentID"<br>
+                        • Click "Start Scanner" to begin scanning<br>
+                        • Position QR code within the frame to scan<br>
+                        • Use manual entry for adding students directly<br>
+                        • Export to Excel includes scan date and time
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const studentList = document.getElementById('studentList');
+        const scannedData = document.getElementById('scannedData');
+        const startBtn = document.getElementById('startScanner');
+        const stopBtn = document.getElementById('stopScanner');
+        const video = document.getElementById('video');
+        const manualInput = document.getElementById('manualInput');
+        const addManualBtn = document.getElementById('addManual');
+        const studentCount = document.getElementById('studentCount');
+        const exportExcelBtn = document.getElementById('exportExcel');
+        const clearAllBtn = document.getElementById('clearAll');
+        const toastContainer = document.getElementById('toastContainer');
+        const scannerStatus = document.getElementById('scannerStatus');
+
+        let streaming = false;
+        let canvas = document.createElement('canvas');
+        let ctx = canvas.getContext('2d');
+        let students = new Map();
+        let scanAnimation = null;
+
+        // Pre-populate
+        const initialStudents = [
+            { name: 'Aljhon Hangad', id: '23787716', timestamp: new Date().toISOString() },
+            { name: 'Mario Jack', id: '23787717', timestamp: new Date().toISOString() }
+        ];
+        initialStudents.forEach(student => {
+            addStudentToDOM(student);
+            students.set(`${student.name} ${student.id}`, student);
+        });
+        updateStudentCount();
+
+        function showToast(message, type = 'success') {
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
+            toastContainer.appendChild(toast);
+            setTimeout(() => toast.classList.add('show'), 100);
+            setTimeout(() => { toast.classList.remove('show'); setTimeout(() => toast.remove(), 300); }, 3000);
+        }
+        function updateScannerStatus(active) {
+            if (active) {
+                scannerStatus.textContent = 'Scanner Active';
+                scannerStatus.className = 'scanner-status scanner-active';
+            } else {
+                scannerStatus.textContent = 'Scanner Inactive';
+                scannerStatus.className = 'scanner-status scanner-inactive';
+            }
+        }
+
+        // ✅ Updated scanner logic with fallback
+        startBtn.addEventListener('click', async () => {
+            try {
+                let stream;
+                try {
+                    stream = await navigator.mediaDevices.getUserMedia({
+                        video: { facingMode: { ideal: "environment" } },
+                        audio: false
+                    });
+                } catch (err) {
+                    console.warn("Back camera not available, trying front camera...");
+                    stream = await navigator.mediaDevices.getUserMedia({
+                        video: { facingMode: { ideal: "user" } },
+                        audio: false
+                    });
+                }
+                video.srcObject = stream;
+                video.play();
+                streaming = true;
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                updateScannerStatus(true);
+                video.addEventListener('loadedmetadata', () => { scanQRCode(); });
+            } catch (error) {
+                showToast('Error accessing camera: ' + error.message, 'error');
+                console.error('Camera access error:', error);
+            }
+        });
+
+        stopBtn.addEventListener('click', stopScanner);
+
+        function stopScanner() {
+            if (scanAnimation) { cancelAnimationFrame(scanAnimation); scanAnimation = null; }
+            if (video.srcObject) { video.srcObject.getTracks().forEach(track => track.stop()); video.srcObject = null; }
+            streaming = false;
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            updateScannerStatus(false);
+        }
+
+        function scanQRCode() {
+            if (!streaming) return;
+            if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                try {
+                    const code = jsQR(imageData.data, imageData.width, imageData.height);
+                    if (code) handleScannedData(code.data);
+                } catch (error) { console.error('QR scanning error:', error); }
+            }
+            if (streaming) scanAnimation = requestAnimationFrame(scanQRCode);
+        }
+
+        function handleScannedData(data) {
+            scannedData.textContent = data;
+            scannedData.classList.add('bg-green-50', 'border-green-200');
+            const match = data.match(/^(.+?)\s+(\d+)$/);
+            if (match) {
+                const name = match[1].trim();
+                const id = match[2].trim();
+                const studentKey = `${name} ${id}`;
+                const timestamp = new Date().toISOString();
+                if (!students.has(studentKey)) {
+                    const studentData = { name, id, timestamp };
+                    students.set(studentKey, studentData);
+                    addStudentToDOM(studentData);
+                    updateStudentCount();
+                    scannedData.classList.add('animate-pulse');
+                    setTimeout(() => scannedData.classList.remove('animate-pulse'), 1000);
+                    showToast(`Student added: ${name} (${id})`, 'success');
+                } else {
+                    showToast(`Student already exists: ${name} (${id})`, 'warning');
+                }
+            } else {
+                showToast('Invalid QR format. Expected: "Name StudentID"', 'error');
+            }
+        }
+
+        function addStudentToDOM(student) {
+            const studentCard = document.createElement('div');
+            studentCard.className = 'student-card bg-white p-4 rounded-lg border border-gray-200 hover:shadow-md flex justify-between items-center';
+            const scanDate = new Date(student.timestamp);
+            const formattedDate = scanDate.toLocaleDateString();
+            const formattedTime = scanDate.toLocaleTimeString();
+            studentCard.innerHTML = `
+                <div>
+                    <h4 class="font-semibold text-gray-800">${student.name}</h4>
+                    <p class="text-gray-600 text-sm">ID: ${student.id}</p>
+                    <p class="text-gray-400 text-xs mt-1">Scanned: ${formattedDate} ${formattedTime}</p>
+                </div>
+                <button class="deleteBtn bg-red-600 hover:bg-red-700 text-white px-2 py-1 rounded text-xs font-medium">Delete</button>
+            `;
+            studentList.appendChild(studentCard);
+            studentCard.querySelector('.deleteBtn').addEventListener('click', () => {
+                students.delete(`${student.name} ${student.id}`);
+                studentCard.remove();
+                updateStudentCount();
+                showToast(`Deleted: ${student.name} (${student.id})`, 'success');
+            });
+        }
+
+        function updateStudentCount() {
+            studentCount.textContent = `${students.size} student${students.size !== 1 ? 's' : ''}`;
+        }
+
+        // Manual entry
+        addManualBtn.addEventListener('click', () => {
+            const input = manualInput.value.trim();
+            if (input) {
+                const match = input.match(/^(.+?)\s+(\d+)$/);
+                if (match) {
+                    const name = match[1].trim();
+                    const id = match[2].trim();
+                    const studentKey = `${name} ${id}`;
+                    const timestamp = new Date().toISOString();
+                    if (!students.has(studentKey)) {
+                        const studentData = { name, id, timestamp };
+                        students.set(studentKey, studentData);
+                        addStudentToDOM(studentData);
+                        updateStudentCount();
+                        manualInput.value = '';
+                        scannedData.textContent = `Added: ${name} (${id})`;
+                        scannedData.className = 'scanned-data p-3 bg-green-50 rounded border border-green-200 text-green-700 min-h-[60px]';
+                        showToast(`Student added: ${name} (${id})`, 'success');
+                    } else {
+                        showToast('Student already exists in the list!', 'warning');
+                    }
+                } else {
+                    showToast('Please enter data in format: "Name StudentID"', 'error');
+                }
+            }
+        });
+        manualInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') addManualBtn.click(); });
+
+        // Clear all
+        clearAllBtn.addEventListener('click', () => {
+            if (students.size === 0) { showToast('No students to clear', 'warning'); return; }
+            if (confirm('Are you sure you want to clear all students?')) {
+                students.clear();
+                studentList.innerHTML = '';
+                updateStudentCount();
+                showToast('All students cleared', 'success');
+            }
+        });
+
+        // Export to Excel
+        exportExcelBtn.addEventListener('click', () => {
+            if (students.size === 0) { showToast('No students to export', 'warning'); return; }
+            let csvContent = "Name,Student ID,Scan Date,Scan Time\n";
+            students.forEach(student => {
+                const scanDate = new Date(student.timestamp);
+                const dateStr = scanDate.toLocaleDateString();
+                const timeStr = scanDate.toLocaleTimeString();
+                csvContent += `"${student.name}",${student.id},"${dateStr}","'${timeStr}"\n`;
+            });
+            const currentDate = new Date().toISOString().split('T')[0];
+            const fileName = `student_list_${currentDate}.csv`;
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            link.setAttribute('href', url);
+            link.setAttribute('download', fileName);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            showToast(`Exported ${students.size} students to Excel`, 'success');
+        });
+    </script>
+</body>
+</html>
